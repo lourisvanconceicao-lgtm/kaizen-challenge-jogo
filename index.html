@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kaizen Challenge: Simulador de Gestão Lean</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .card { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+        .card:hover { transform: translateY(-5px) scale(1.03); box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
+        .card.selected { border-color: #f59e0b; transform: translateY(-5px) scale(1.03); }
+        .card.locked { background-color: #f3f4f6; cursor: not-allowed; opacity: 0.7; }
+        .station { transition: all 0.2s ease; border: 2px solid #d1d5db; }
+        .station.active { border-color: #4f46e5; background-color: #e0e7ff; transform: scale(1.05); }
+        .station.completed { border-color: #16a34a; background-color: #dcfce7; }
+        .feedback-correct { background-color: #dcfce7; color: #15803d; }
+        .feedback-incorrect { background-color: #fee2e2; color: #b91c1c; }
+        .deck-card { background: linear-gradient(135deg, #4f46e5, #818cf8); border: 2px solid white; }
+        .modal-backdrop { background-color: rgba(0,0,0,0.6); }
+        .kpi-good { color: #16a34a; }
+        .kpi-bad { color: #b91c1c; }
+        .kpi-neutral { color: #ca8a04; }
+
+        /* Layout do Tabuleiro */
+        #board-layout {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            grid-template-rows: repeat(5, auto);
+            gap: 1rem;
+        }
+        #game-flow-control {
+            grid-column: 2 / 6;
+            grid-row: 2 / 5;
+            background-color: #1e293b; /* fallback */
+            background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url("https://images.unsplash.com/photo-1581333107534-135b1ded14a6?q=80&w=1932&auto=format&fit=crop");
+            background-size: cover;
+            background-position: center;
+        }
+        
+        /* Estilos do Dado 3D */
+        .dice-area { perspective: 800px; }
+        .dice { width: 100px; height: 100px; position: relative; transform-style: preserve-3d; transition: transform 1.5s ease-out; }
+        .dice-face {
+            position: absolute; width: 100px; height: 100px;
+            background: rgba(255, 255, 255, 0.9); border: 2px solid #4f46e5;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5rem; font-weight: bold; color: #4f46e5;
+            backface-visibility: hidden;
+        }
+        .front  { transform: translateZ(50px); }
+        .back   { transform: rotateY(180deg) translateZ(50px); }
+        .right  { transform: rotateY(90deg) translateZ(50px); }
+        .left   { transform: rotateY(-90deg) translateZ(50px); }
+        .top    { transform: rotateX(90deg) translateZ(50px); }
+        .bottom { transform: rotateX(-90deg) translateZ(50px); }
+
+        /* XP Bar & UC Progress */
+        .progress-bar-container { background-color: #e5e7eb; border-radius: 9999px; overflow: hidden; }
+        .progress-bar { height: 100%; transition: width 0.5s ease-in-out; }
+        #xp-bar { background-color: #f59e0b; }
+        #uc-progress-bar { background-color: #10b981; }
+
+        /* Medalhas */
+        .medal { display: inline-block; width: 24px; height: 24px; filter: grayscale(1); opacity: 0.5; }
+        .medal.earned { filter: grayscale(0); opacity: 1; }
+
+        /* Notificações */
+        #notification-center { position: fixed; top: 1rem; right: 1rem; z-index: 100; }
+        .notification {
+            background-color: white; color: black; padding: 1rem; border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1rem;
+            animation: slideIn 0.5s ease-out, fadeOut 0.5s ease-in 4.5s forwards;
+        }
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    </style>
+</head>
+<body class="bg-gray-200 text-gray-800 flex items-center justify-center min-h-screen">
+
+    <div id="start-screen" class="p-8 md:p-12 text-center flex flex-col items-center justify-center h-screen w-screen bg-cover bg-center" style="background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.unsplash.com/photo-1621999801932-736065f28643?q=80&w=1974&auto=format&fit=crop');">
+        <h1 class="text-4xl md:text-5xl font-bold text-white mb-4">Kaizen Challenge</h1>
+        <p class="text-2xl text-gray-200 mb-8 max-w-2xl font-medium">Simulador de Gestão Lean</p>
+        <button id="start-button" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg text-xl hover:bg-indigo-700 transition-colors shadow-md hover:shadow-lg">Iniciar Simulação</button>
+    </div>
+
+    <div id="game-container" class="w-full max-w-7xl bg-white rounded-2xl shadow-2xl overflow-hidden hidden">
+        
+        <div id="mode-selection-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center">
+            <h2 class="text-3xl font-bold mb-6">Escolha o Modo de Jogo</h2>
+            <div class="grid md:grid-cols-2 gap-8 max-w-4xl">
+                <button data-mode="carreira" class="game-mode-btn bg-white p-6 rounded-lg shadow-lg hover:shadow-xl transition-shadow border-2 border-transparent hover:border-indigo-500">
+                    <h3 class="text-2xl font-bold text-indigo-700 mb-2">Modo Carreira</h3>
+                    <p>Progrida pelas 6 Unidades de Competência (UCs) em ordem, desbloqueando conhecimentos e ferramentas.</p>
+                </button>
+                <button data-mode="consultoria" class="game-mode-btn bg-white p-6 rounded-lg shadow-lg hover:shadow-xl transition-shadow border-2 border-transparent hover:border-indigo-500">
+                    <h3 class="text-2xl font-bold text-indigo-700 mb-2">Modo Consultoria</h3>
+                    <p>Enfrente desafios aleatórios e busque a maior pontuação de KPIs. Todas as ferramentas disponíveis.</p>
+                </button>
+            </div>
+        </div>
+
+        <div id="specialization-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center">
+            <h2 id="specialization-title" class="text-3xl font-bold mb-6"></h2>
+            <div id="specialization-options" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl">
+                 <!-- Opções de especialização serão inseridas aqui pelo JS -->
+            </div>
+        </div>
+
+        <div id="game-screen" class="hidden">
+            <header class="bg-gray-800 text-white p-2 grid grid-cols-12 gap-2 text-center items-center text-xs">
+                <div class="col-span-4 md:col-span-3">
+                    <span class="font-semibold text-gray-400 block">UC ATUAL</span>
+                    <span id="uc-name-stat" class="font-bold text-sm"></span>
+                    <div class="flex items-center justify-center gap-2">
+                        <div id="uc-progress-container" class="progress-bar-container w-full h-2 mt-1"><div id="uc-progress-bar" class="progress-bar"></div></div>
+                        <div id="medals-container" class="flex gap-1"></div>
+                    </div>
+                </div>
+                <div><span class="font-semibold text-gray-400 block">NÍVEL</span><span id="level-stat" class="text-lg font-bold">1</span></div>
+                <div class="col-span-2 md:col-span-1"><div id="xp-bar-container" class="progress-bar-container w-full h-2"><div id="xp-bar" class="progress-bar"></div></div><span id="xp-text">0/100</span></div>
+                <div><span class="font-semibold text-gray-400 block">REPUTAÇÃO</span><span id="reputation-stat" class="text-lg font-bold">100</span></div>
+                <div><span class="font-semibold text-gray-400 block">MORAL</span><span id="moral-stat" class="text-lg font-bold">90%</span></div>
+                <div><span class="font-semibold text-gray-400 block">CAPEX</span><span id="capex-stat" class="text-lg font-bold">R$5k</span></div>
+                <div><span class="font-semibold text-gray-400 block">OPEX</span><span id="opex-stat" class="text-lg font-bold">R$2k</span></div>
+                <div><span class="font-semibold text-gray-400 block">OEE</span><span id="oee-stat" class="text-lg font-bold">60%</span></div>
+                <div><span class="font-semibold text-gray-400 block">LEAD TIME</span><span id="lead-time-stat" class="text-lg font-bold">10d</span></div>
+                <div><span class="font-semibold text-gray-400 block">FPY</span><span id="fpy-stat" class="text-lg font-bold">85%</span></div>
+                <div class="flex items-center justify-center gap-2">
+                    <button id="glossary-button" class="text-gray-300 hover:text-white" title="Glossário">?</button>
+                    <button id="mute-button" class="text-gray-300 hover:text-white" title="Mudo">🔊</button>
+                </div>
+            </header>
+
+            <main id="main-content" class="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div id="board-layout" class="lg:col-span-2">
+                    <!-- As estações serão inseridas aqui pelo JS -->
+                    <div id="game-flow-control" class="text-center p-6 rounded-lg min-h-[300px] flex flex-col items-center justify-center">
+                        <div id="dice-roller-section">
+                            <h3 class="text-xl font-bold text-white mb-4">Turno <span id="turn-counter">1</span>: Sorteie seu desafio!</h3>
+                            <div class="dice-area mb-4 h-[100px] flex items-center justify-center">
+                                <div id="dice" class="dice">
+                                    <div class="dice-face front">?</div>
+                                    <div class="dice-face back">18</div>
+                                    <div class="dice-face right">3</div>
+                                    <div class="dice-face left">15</div>
+                                    <div class="dice-face top">7</div>
+                                    <div class="dice-face bottom">11</div>
+                                </div>
+                            </div>
