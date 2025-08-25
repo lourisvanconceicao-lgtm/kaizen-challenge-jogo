@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kaizen Challenge: Simulador de Gestão Lean</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .card { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+        .card:hover { transform: translateY(-5px) scale(1.03); box-shadow: 0 10px 20px rgba(0,0,0,0.15); }
+        .card.selected { border-color: #f59e0b; transform: translateY(-5px) scale(1.03); }
+        .card.locked { background-color: #f3f4f6; cursor: not-allowed; opacity: 0.7; }
+        .station { transition: all 0.2s ease; border: 2px solid #d1d5db; }
+        .station.active { border-color: #4f46e5; background-color: #e0e7ff; transform: scale(1.05); }
+        .station.completed { border-color: #16a34a; background-color: #dcfce7; }
+        .feedback-correct { background-color: #dcfce7; color: #15803d; }
+        .feedback-incorrect { background-color: #fee2e2; color: #b91c1c; }
+        .deck-card { background: linear-gradient(135deg, #4f46e5, #818cf8); border: 2px solid white; }
+        .modal-backdrop { background-color: rgba(0,0,0,0.6); }
+        .kpi-good { color: #16a34a; }
+        .kpi-bad { color: #b91c1c; }
+        .kpi-neutral { color: #ca8a04; }
+
+        /* Layout do Tabuleiro */
+        #board-layout {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            grid-template-rows: repeat(5, auto);
+            gap: 1rem;
+        }
+        #game-flow-control {
+            grid-column: 2 / 6;
+            grid-row: 2 / 5;
+            background-color: #1e293b; /* fallback */
+            background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url("https://images.unsplash.com/photo-1581333107534-135b1ded14a6?q=80&w=1932&auto=format&fit=crop");
+            background-size: cover;
+            background-position: center;
+        }
+        
+        /* Estilos do Dado 3D */
+        .dice-area { perspective: 800px; }
+        .dice { width: 100px; height: 100px; position: relative; transform-style: preserve-3d; transition: transform 1.5s ease-out; }
+        .dice-face {
+            position: absolute; width: 100px; height: 100px;
+            background: rgba(255, 255, 255, 0.9); border: 2px solid #4f46e5;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5rem; font-weight: bold; color: #4f46e5;
+            backface-visibility: hidden;
+        }
+        .front  { transform: translateZ(50px); }
+        .back   { transform: rotateY(180deg) translateZ(50px); }
+        .right  { transform: rotateY(90deg) translateZ(50px); }
+        .left   { transform: rotateY(-90deg) translateZ(50px); }
+        .top    { transform: rotateX(90deg) translateZ(50px); }
+        .bottom { transform: rotateX(-90deg) translateZ(50px); }
+
+        /* XP Bar & UC Progress */
+        .progress-bar-container { background-color: #e5e7eb; border-radius: 9999px; overflow: hidden; }
+        .progress-bar { height: 100%; transition: width 0.5s ease-in-out; }
+        #xp-bar { background-color: #f59e0b; }
+        #uc-progress-bar { background-color: #10b981; }
+
+        /* Medalhas */
+        .medal { display: inline-block; width: 24px; height: 24px; filter: grayscale(1); opacity: 0.5; }
+        .medal.earned { filter: grayscale(0); opacity: 1; }
+
+        /* Notificações */
+        #notification-center { position: fixed; top: 1rem; right: 1rem; z-index: 100; }
+        .notification {
+            background-color: white; color: black; padding: 1rem; border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1rem;
+            animation: slideIn 0.5s ease-out, fadeOut 0.5s ease-in 4.5s forwards;
+        }
+        @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    </style>
+</head>
+<body class="bg-gray-200 text-gray-800 flex items-center justify-center min-h-screen">
+
+    <div id="start-screen" class="p-8 md:p-12 text-center flex flex-col items-center justify-center h-screen w-screen bg-cover bg-center" style="background-image: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), url('https://images.unsplash.com/photo-1621999801932-736065f28643?q=80&w=1974&auto=format&fit=crop');">
+        <h1 class="text-4xl md:text-5xl font-bold text-white mb-4">Kaizen Challenge</h1>
+        <p class="text-2xl text-gray-200 mb-8 max-w-2xl font-medium">Simulador de Gestão Lean</p>
+        <button id="start-button" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg text-xl hover:bg-indigo-700 transition-colors shadow-md hover:shadow-lg">Iniciar Simulação</button>
+    </div>
+
+    <div id="game-container" class="w-full max-w-7xl bg-white rounded-2xl shadow-2xl overflow-hidden hidden">
+        
+        <div id="mode-selection-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center">
+            <h2 class="text-3xl font-bold mb-6">Escolha o Modo de Jogo</h2>
+            <div class="grid md:grid-cols-2 gap-8 max-w-4xl">
+                <button data-mode="carreira" class="game-mode-btn bg-white p-6 rounded-lg shadow-lg hover:shadow-xl transition-shadow border-2 border-transparent hover:border-indigo-500">
+                    <h3 class="text-2xl font-bold text-indigo-700 mb-2">Modo Carreira</h3>
+                    <p>Progrida pelas 6 Unidades de Competência (UCs) em ordem, desbloqueando conhecimentos e ferramentas.</p>
+                </button>
+                <button data-mode="consultoria" class="game-mode-btn bg-white p-6 rounded-lg shadow-lg hover:shadow-xl transition-shadow border-2 border-transparent hover:border-indigo-500">
+                    <h3 class="text-2xl font-bold text-indigo-700 mb-2">Modo Consultoria</h3>
+                    <p>Enfrente desafios aleatórios e busque a maior pontuação de KPIs. Todas as ferramentas disponíveis.</p>
+                </button>
+            </div>
+        </div>
+
+        <div id="specialization-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center">
+            <h2 id="specialization-title" class="text-3xl font-bold mb-6"></h2>
+            <div id="specialization-options" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl">
+                 <!-- Opções de especialização serão inseridas aqui pelo JS -->
+            </div>
+        </div>
+
+        <div id="game-screen" class="hidden">
+            <header class="bg-gray-800 text-white p-2 grid grid-cols-12 gap-2 text-center items-center text-xs">
+                <div class="col-span-4 md:col-span-3">
+                    <span class="font-semibold text-gray-400 block">UC ATUAL</span>
+                    <span id="uc-name-stat" class="font-bold text-sm"></span>
+                    <div class="flex items-center justify-center gap-2">
+                        <div id="uc-progress-container" class="progress-bar-container w-full h-2 mt-1"><div id="uc-progress-bar" class="progress-bar"></div></div>
+                        <div id="medals-container" class="flex gap-1"></div>
+                    </div>
+                </div>
+                <div><span class="font-semibold text-gray-400 block">NÍVEL</span><span id="level-stat" class="text-lg font-bold">1</span></div>
+                <div class="col-span-2 md:col-span-1"><div id="xp-bar-container" class="progress-bar-container w-full h-2"><div id="xp-bar" class="progress-bar"></div></div><span id="xp-text">0/100</span></div>
+                <div><span class="font-semibold text-gray-400 block">REPUTAÇÃO</span><span id="reputation-stat" class="text-lg font-bold">100</span></div>
+                <div><span class="font-semibold text-gray-400 block">MORAL</span><span id="moral-stat" class="text-lg font-bold">90%</span></div>
+                <div><span class="font-semibold text-gray-400 block">CAPEX</span><span id="capex-stat" class="text-lg font-bold">R$5k</span></div>
+                <div><span class="font-semibold text-gray-400 block">OPEX</span><span id="opex-stat" class="text-lg font-bold">R$2k</span></div>
+                <div><span class="font-semibold text-gray-400 block">OEE</span><span id="oee-stat" class="text-lg font-bold">60%</span></div>
+                <div><span class="font-semibold text-gray-400 block">LEAD TIME</span><span id="lead-time-stat" class="text-lg font-bold">10d</span></div>
+                <div><span class="font-semibold text-gray-400 block">FPY</span><span id="fpy-stat" class="text-lg font-bold">85%</span></div>
+                <div class="flex items-center justify-center gap-2">
+                    <button id="glossary-button" class="text-gray-300 hover:text-white" title="Glossário">?</button>
+                    <button id="mute-button" class="text-gray-300 hover:text-white" title="Mudo">🔊</button>
+                </div>
+            </header>
+
+            <main id="main-content" class="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div id="board-layout" class="lg:col-span-2">
+                    <!-- As estações serão inseridas aqui pelo JS -->
+                    <div id="game-flow-control" class="text-center p-6 rounded-lg min-h-[300px] flex flex-col items-center justify-center">
+                        <div id="dice-roller-section">
+                            <h3 class="text-xl font-bold text-white mb-4">Turno <span id="turn-counter">1</span>: Sorteie seu desafio!</h3>
+                            <div class="dice-area mb-4 h-[100px] flex items-center justify-center">
+                                <div id="dice" class="dice">
+                                    <div class="dice-face front">?</div>
+                                    <div class="dice-face back">18</div>
+                                    <div class="dice-face right">3</div>
+                                    <div class="dice-face left">15</div>
+                                    <div class="dice-face top">7</div>
+                                    <div class="dice-face bottom">11</div>
+                                </div>
+                            </div>
+                            <button id="roll-dice-button" class="bg-red-600 text-white font-bold py-3 px-8 rounded-lg text-xl hover:bg-red-700 transition-colors shadow-md">Lançar Dado</button>
+                        </div>
+                        <div id="scenario-container" class="hidden text-left w-full bg-white/80 p-4 rounded-lg"><p id="scenario-text" class="text-lg mb-4 leading-relaxed text-gray-900"></p><p id="scenario-instruction" class="font-semibold text-indigo-800">Selecione uma carta para resolver o problema ou ignore-o.</p><button id="ignore-problem-button" class="mt-4 w-full bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600">Ignorar Problema (-15 Rep)</button></div>
+                        <div id="feedback-container" class="hidden mt-6 p-4 rounded-lg text-left w-full"><p id="feedback-text" class="font-medium text-lg"></p><p id="operator-feedback" class="text-sm italic text-gray-600 mt-2"></p><button id="next-turn-button" class="mt-4 bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">Próximo Turno</button></div>
+                    </div>
+                </div>
+                <div class="lg:col-span-1 flex flex-col">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-bold text-lg text-gray-700">Mão de Ferramentas</h3>
+                        <div class="text-center"><div class="deck-card w-16 h-24 rounded-lg flex items-center justify-center flex-col text-white font-bold shadow-lg"><span>DECK</span><span id="deck-count"></span></div></div>
+                    </div>
+                    <div id="hand-container" class="space-y-4 flex-grow"></div>
+                    <div id="exchange-controls" class="mt-4 space-y-2">
+                        <button id="recovery-challenge-button" class="hidden w-full bg-yellow-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-yellow-600">Desafio de Recuperação!</button>
+                        <button id="exchange-cards-button" class="w-full bg-gray-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-600">Trocar Cartas</button>
+                        <div id="confirm-exchange-section" class="hidden">
+                            <button id="confirm-exchange-button" class="w-full bg-amber-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-amber-600">Confirmar Troca (Custo: 0h)</button>
+                            <button id="cancel-exchange-button" class="w-full mt-2 bg-gray-300 text-gray-700 font-bold py-2 px-4 rounded-lg hover:bg-gray-400">Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+        
+        <div id="end-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center">
+            <h1 class="text-4xl md:text-5xl font-bold text-gray-900 mb-4">Missão Concluída!</h1>
+            <div class="grid md:grid-cols-2 gap-8 w-full max-w-5xl">
+                <div id="a3-report" class="bg-white p-6 rounded-lg shadow-lg text-left max-h-[70vh] overflow-y-auto"></div>
+                <div class="bg-white p-6 rounded-lg shadow-lg">
+                    <canvas id="kpi-chart"></canvas>
+                    <div id="achievements-display" class="mt-4"></div>
+                </div>
+            </div>
+            <button id="restart-button" class="mt-8 bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg text-xl hover:bg-indigo-700">Jogar Novamente</button>
+        </div>
+
+        <div id="game-over-screen" class="hidden p-8 md:p-12 text-center flex flex-col items-center justify-center bg-red-100">
+            <h1 class="text-4xl md:text-5xl font-bold text-red-700 mb-4">Fim de Jogo</h1>
+            <p id="game-over-reason" class="text-xl text-red-600 mb-8 max-w-2xl"></p>
+            <div id="a3-report-gameover" class="bg-white p-6 rounded-lg shadow-lg text-left max-h-[50vh] overflow-y-auto w-full max-w-2xl mt-4"></div>
+            <button id="restart-game-over-button" class="mt-8 bg-red-600 text-white font-bold py-3 px-8 rounded-lg text-xl hover:bg-red-700">Tentar Novamente</button>
+        </div>
+    
+        <div id="modal-generic" class="modal-backdrop hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full text-center transform transition-all">
+                <h2 id="modal-title" class="text-2xl font-bold mb-4"></h2>
+                <p id="modal-text" class="text-lg text-gray-700 mb-4"></p>
+                <div id="modal-question-section" class="hidden">
+                    <p id="modal-question" class="font-semibold mb-4"></p>
+                    <div id="modal-answers" class="space-y-2"></div>
+                </div>
+                <div id="modal-feedback-section" class="hidden mt-4">
+                    <p id="modal-feedback-text" class="font-medium"></p>
+                </div>
+                <button id="modal-close-button" class="mt-4 bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">Continuar</button>
+            </div>
+        </div>
+
+        <div id="glossary-modal" class="modal-backdrop hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-2xl w-full text-left"><h2 class="text-2xl font-bold text-gray-800 mb-4">Glossário de Ferramentas Lean</h2><div id="glossary-content" class="max-h-[70vh] overflow-y-auto"></div><button id="close-glossary-modal" class="mt-6 bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700">Fechar</button></div>
+        </div>
+        
+        <div id="notification-center"></div>
+    </div>
+
+    <script>
+        // --- DATA ---
+        const gameData = {
+            playerStats: { reputation: 100, capex: 5000, opex: 1500, moral: 90, oee: 60, leadTime: 10, fpy: 85, level: 1, xp: 0 },
+            levelThresholds: [0, 100, 250, 500, 1000],
+            specializations: {
+                carreira: [
+                    { id: 'seguranca', name: 'Técnico em Segurança', description: 'Bônus de 10% na Reputação e Moral ao usar cartas da UC de Saúde e Segurança.', bonusCards: ['5S', 'TREINAMENTO', 'ANALISE_ERGONOMICA', 'CIPA', 'DDS'] },
+                    { id: 'sustentabilidade', name: 'Analista Ambiental', description: 'Bônus de 10% na Reputação e economia de OPEX ao usar cartas da UC de Sustentabilidade.', bonusCards: ['EFICIENCIA_ENERGETICA', 'COLETA_SELETIVA', 'GESTAO_RESIDUOS'] },
+                    { id: 'ti', name: 'Técnico de TI Industrial', description: 'Bônus de 10% de eficácia em ferramentas que melhoram OEE e Lead Time da UC de TIC.', bonusCards: ['GESTAO_VISUAL', 'REDE_INDUSTRIAL', 'CIBERSEGURANCA', 'DASHBOARD_REALTIME'] }
+                ],
+                consultoria: [
+                    { id: 'qualidade', name: 'Mestre da Qualidade', description: 'Bônus de 10% de eficácia em ferramentas que melhoram o FPY (Poka-Yoke, CEP, Jidoka).', bonusCards: ['POKA-YOKE', 'CEP', 'JIDOKA'] },
+                    { id: 'fluxo', name: 'Arquiteto de Fluxo', description: 'Bônus de 10% de eficácia em ferramentas que melhoram Lead Time e OEE (Kanban, VSM, SMED).', bonusCards: ['KANBAN', 'VSM', 'SMED'] },
+                    { id: 'sustentabilidade', name: 'Guardião da Sustentabilidade', description: 'Bônus de 10% na Reputação e economia de OPEX ao usar cartas de sustentabilidade.', bonusCards: ['EFICIENCIA_ENERGETICA', 'COLETA_SELETIVA', 'GESTAO_RESIDUOS'] },
+                    { id: 'projetos', name: 'Líder de Projetos', description: 'Bônus de 10% na Reputação e Moral ao usar ferramentas de gestão de projetos (Gantt, Scrum, A3).', bonusCards: ['GANTT', 'SCRUM', 'A3_REPORT', 'FMEA'] }
+                ]
+            },
+            ucData: [
+                { id: 'SST', name: 'Saúde e Segurança', scenarios: ['SST_GENERICO_1', 'SST_GENERICO_2'], genericScenarios: ['SST_GENERICO_1', 'SST_GENERICO_2'], unlocks: ['ANALISE_ERGONOMICA', 'CIPA', 'DDS'], medalColor: 'bg-red-500', kpiGoal: { key: 'moral', value: 90, label: 'Moral' } },
+                { id: 'SUST', name: 'Sustentabilidade', scenarios: ['SUST_GENERICO_1'], genericScenarios: ['SUST_GENERICO_1'], unlocks: ['EFICIENCIA_ENERGETICA', 'COLETA_SELETIVA', 'GESTAO_RESIDUOS'], medalColor: 'bg-green-500', kpiGoal: { key: 'reputation', value: 110, label: 'Reputação' } },
+                { id: 'TIC', name: 'TIC', scenarios: ['TIC_GENERICO_1'], genericScenarios: ['TIC_GENERICO_1'], unlocks: ['REDE_INDUSTRIAL', 'CIBERSEGURANCA', 'DASHBOARD_REALTIME'], medalColor: 'bg-blue-500', kpiGoal: { key: 'leadTime', value: 8, isLower: true, label: 'Lead Time' } },
+                { id: 'QUAL', name: 'Qualidade e Produtividade', scenarios: ['QUAL_GENERICO_1', 'QUAL_GENERICO_2'], genericScenarios: ['QUAL_GENERICO_1', 'QUAL_GENERICO_2'], unlocks: ['ISHIKAWA', '5PORQUES', 'PARETO', 'CEP'], medalColor: 'bg-yellow-500', kpiGoal: { key: 'fpy', value: 92, label: 'FPY' } },
+                { id: 'IND40', name: 'Indústria 4.0/5.0', scenarios: ['IND40_GENERICO_1'], genericScenarios: ['IND40_GENERICO_1'], unlocks: ['IIOT_SENSOR', 'DIGITAL_TWIN', 'MANUTENCAO_PREDITIVA'], medalColor: 'bg-purple-500', kpiGoal: { key: 'oee', value: 75, label: 'OEE' } },
+                { id: 'PROJ', name: 'Desenvolvimento de Projetos', scenarios: ['PROJ_GENERICO_1'], genericScenarios: ['PROJ_GENERICO_1'], unlocks: ['GANTT', 'SCRUM', 'FMEA'], medalColor: 'bg-indigo-500', kpiGoal: { key: 'reputation', value: 150, label: 'Reputação' } },
+            ],
+            ucQuestions: {
+                'SST': [
+                    { q: "Qual norma regulamentadora (NR) trata de segurança em instalações e serviços em eletricidade?", a: ["NR-10", "NR-12", "NR-35"], correct: 0, stations: [4] },
+                    { q: "O que a sigla CIPA significa?", a: ["Comissão Interna de Prevenção de Acidentes", "Controle Interno de Processos e Anomalias", "Centro Integrado de Produção Automatizada"], correct: 0, stations: [] },
+                    { q: "Qual o objetivo principal de uma Análise Ergonômica do Trabalho (AET)?", a: ["Aumentar a velocidade da produção", "Adaptar o trabalho às características do trabalhador", "Reduzir o custo com matéria-prima"], correct: 1, stations: [8, 18] },
+                    { q: "O que é um Mapa de Risco?", a: ["Um plano de evacuação de emergência", "Uma representação gráfica dos riscos no ambiente de trabalho", "Um software para prever falhas de máquinas"], correct: 1, stations: [] },
+                    { q: "Qual a cor utilizada para indicar 'Perigo' em sinalização de segurança?", a: ["Amarelo", "Laranja", "Vermelho"], correct: 2, stations: [6, 12] },
+                    { q: "Diferencie imprudência, imperícia e negligência como causas de acidentes.", a: ["São sinônimos para erro humano", "Imprudência é ação perigosa; imperícia é falta de habilidade; negligência é omissão", "Negligência é o mais grave dos três"], correct: 1, stations: [] }
+                ],
+                'SUST': [
+                    { q: "O que significa a sigla ESG, um critério cada vez mais importante para investidores?", a: ["Energy, Safety, Governance", "Environmental, Social, Governance", "Efficiency, Sustainability, Growth"], correct: 1, stations: [] },
+                    { q: "Qual dos 3 R's da sustentabilidade é considerado o mais importante para a redução de impacto ambiental?", a: ["Reciclar", "Reutilizar", "Reduzir"], correct: 2, stations: [12, 15] },
+                    { q: "O que é 'Logística Reversa' no contexto da sustentabilidade?", a: ["Otimizar rotas de entrega para economizar combustível", "O processo de retorno de produtos/materiais após o consumo", "Usar apenas veículos elétricos na logística"], correct: 1, stations: [7, 10] },
+                    { q: "A ISO 14001 é uma norma internacional para qual tipo de sistema de gestão?", a: ["Gestão da Qualidade", "Gestão da Segurança e Saúde", "Gestão Ambiental"], correct: 2, stations: [] },
+                    { q: "O que é 'Economia Circular'?", a: ["Um modelo econômico focado apenas em reciclagem", "Um modelo que visa eliminar resíduos e manter materiais em uso", "Uma política de descontos para produtos retornados"], correct: 1, stations: [12, 14, 15] }
+                ],
+                'TIC': [
+                    { q: "Em uma rede industrial, qual protocolo é comumente usado para comunicação determinística em tempo real?", a: ["HTTP", "Profinet", "FTP"], correct: 1, stations: [17] },
+                    { q: "O que é 'Phishing' no contexto de cibersegurança?", a: ["Um tipo de vírus de computador", "Uma técnica para 'pescar' senhas e dados confidenciais", "Um sistema de refrigeração para data centers"], correct: 1, stations: [16, 17] },
+                    { q: "O que é um 'Firewall' em uma rede de computadores?", a: ["Um dispositivo de segurança que monitora e controla o tráfego", "Um antivírus para servidores", "Um cabo de rede de alta velocidade"], correct: 0, stations: [17] },
+                    { q: "O que significa 'Cloud Computing' (Computação em Nuvem)?", a: ["Armazenar dados em um HD externo", "A entrega de serviços de computação pela Internet", "Usar computadores resfriados a ar"], correct: 1, stations: [17] },
+                    { q: "Qual a principal função de um Sistema Operacional?", a: ["Criar planilhas e textos", "Gerenciar o hardware e software do computador", "Proteger contra vírus"], correct: 1, stations: [16, 17] }
+                ],
+                'QUAL': [
+                    { q: "A ferramenta 'Diagrama de Pareto' se baseia em qual princípio?", a: ["O princípio 80/20", "O ciclo PDCA", "Os 5 porquês"], correct: 0, stations: [9] },
+                    { q: "No ciclo PDCA, o que a letra 'C' representa?", a: ["Criar", "Checar", "Corrigir"], correct: 1, stations: [] },
+                    { q: "Qual o principal objetivo da metodologia SMED?", a: ["Reduzir defeitos de qualidade", "Reduzir o tempo de setup de máquinas", "Reduzir o estoque em processo"], correct: 1, stations: [1, 2, 3] },
+                    { q: "Qual dos 7 desperdícios do Lean se refere a produzir mais do que o necessário?", a: ["Espera", "Superprodução", "Transporte"], correct: 1, stations: [10, 13] },
+                    { q: "A ferramenta '5W2H' é utilizada principalmente para...?", a: ["Analisar a causa raiz de um problema", "Elaborar planos de ação detalhados", "Mapear o fluxo de valor"], correct: 1, stations: [14] },
+                    { q: "O que é Takt Time?", a: ["O tempo total de produção de um item", "O ritmo de produção necessário para atender a demanda do cliente", "O tempo de parada de uma máquina"], correct: 1, stations: [13] }
+                ],
+                'IND40': [
+                    { q: "O conceito de 'Gêmeo Digital' (Digital Twin) na Indústria 4.0 refere-se a:", a: ["Um robô que imita um humano", "Uma cópia de segurança dos dados", "Uma réplica virtual de um processo físico"], correct: 2, stations: [14, 17] },
+                    { q: "O que significa a sigla IIoT?", a: ["Internal Internet of Things", "Industrial Internet of Things", "Intelligent Internet of Things"], correct: 1, stations: [] },
+                    { q: "O que é 'Manufatura Aditiva'?", a: ["Um software de gestão de produção", "O processo de impressão 3D industrial", "Um método de controle de qualidade"], correct: 1, stations: [14] },
+                    { q: "Qual pilar da Indústria 4.0 se refere à análise de grandes volumes de dados para encontrar padrões?", a: ["Cibersegurança", "Big Data e Analytics", "Integração de Sistemas"], correct: 1, stations: [17] },
+                    { q: "Diferencie inovação incremental e disruptiva.", a: ["Incremental melhora o existente; disruptiva cria um novo mercado", "São a mesma coisa", "Disruptiva é mais barata que a incremental"], correct: 0, stations: [] }
+                ],
+                'PROJ': [
+                    { q: "Na metodologia ágil SCRUM, qual evento marca o início de um Sprint?", a: ["Daily Scrum", "Sprint Review", "Sprint Planning"], correct: 2, stations: [14, 16] },
+                    { q: "Qual ferramenta é mais adequada para visualizar a dependência entre tarefas em um projeto?", a: ["Kanban", "Gráfico de Gantt", "Diagrama de Ishikawa"], correct: 1, stations: [14] },
+                    { q: "No gerenciamento de projetos, o que é o 'Caminho Crítico'?", a: ["As tarefas mais difíceis do projeto", "A sequência de tarefas que determina a duração total do projeto", "As tarefas com o maior custo"], correct: 1, stations: [13, 14] },
+                    { q: "O que é um 'Stakeholder' em um projeto?", a: ["O gerente do projeto", "O cliente final do produto", "Qualquer parte interessada ou afetada pelo projeto"], correct: 2, stations: [] },
+                    { q: "Qual a diferença entre a fase de planejamento e a fase de execução de um projeto?", a: ["Planejamento define o 'o quê' e 'como'; Execução é 'fazer'", "Não há diferença", "Execução vem antes do planejamento"], correct: 0, stations: [14] }
+                ],
+            },
+            recoveryChallenges: [
+                { id: 'RC1', text: "Um cliente importante ameaça cancelar um contrato devido a um pequeno defeito que passou pela inspeção. Sua reputação está em jogo!", question: "Qual ação imediata tem a maior chance de reverter a situação?", answers: [{text: "Oferecer um grande desconto no próximo pedido."}, {text: "Enviar um Relatório A3 detalhado com a causa raiz e ações corretivas."}, {text: "Prometer que não vai acontecer novamente."}], correctIndex: 1, success: { reputation: 25, moral: 10 }, failure: { reputation: -15 } },
+                { id: 'RC2', text: "A produtividade caiu drasticamente e a equipe está desmotivada. É preciso uma ação de impacto.", question: "Qual iniciativa tem maior potencial para levantar o moral e os KPIs?", answers: [{text: "Organizar um 'Mutirão Kaizen' com recompensas para as melhores ideias."}, {text: "Contratar um consultor externo para avaliar a equipe."}, {text: "Aumentar as metas de produção para forçar a melhoria."}], correctIndex: 0, success: { moral: 20, oee: 5, fpy: 2 }, failure: { moral: -15, reputation: -10 } }
+            ],
+            toolCards: [
+                { id: '5S', name: '5S', description: 'Organiza o ambiente de trabalho.', cost: { opex: 50, time: 1 }, effect: { reputation: 10, moral: 5 }, uc: 'SST', category: 'qualidade' },
+                { id: 'TREINAMENTO', name: 'Treinamento', description: 'Capacita a equipe em procedimentos.', cost: { opex: 300, time: 4 }, effect: { reputation: 10, fpy: 2, moral: 10 }, uc: 'SST', category: 'qualidade' },
+                { id: 'KAIZEN', name: 'Kaizen', description: 'Promove a melhoria contínua.', cost: { opex: 100, time: 2 }, effect: { reputation: 5, fpy: 1, moral: 2 }, uc: 'QUAL', category: 'qualidade' },
+                { id: 'POKA-YOKE', name: 'Poka-Yoke', description: 'Cria um dispositivo à prova de erros.', cost: { capex: 250, time: 3 }, effect: { reputation: 15, fpy: 5 }, uc: 'QUAL', category: 'qualidade' },
+                { id: 'VSM', name: 'VSM', description: 'Mapeia o fluxo de valor.', cost: { opex: 150, time: 4 }, effect: { reputation: 5, leadTime: -1 }, uc: 'QUAL', category: 'fluxo' },
+                { id: 'KANBAN', name: 'Kanban', description: 'Controla o fluxo de trabalho visualmente.', cost: { opex: 200, time: 2 }, effect: { leadTime: -0.5, oee: 2 }, uc: 'QUAL', category: 'fluxo' },
+                { id: 'SMED', name: 'SMED', description: 'Reduz o tempo de setup de máquinas.', cost: { capex: 400, time: 5 }, effect: { oee: 5, opexSaving: 50 }, uc: 'QUAL', category: 'fluxo' },
+                { id: 'TPM', name: 'TPM', description: 'Implementa manutenção preventiva.', cost: { capex: 400, time: 3 }, effect: { reputation: 10, oee: 10, opexSaving: 100 }, uc: 'QUAL', category: 'fluxo' },
+                { id: 'GESTAO_VISUAL', name: 'Gestão Visual', description: 'Torna a informação clara e acessível.', cost: { opex: 150, time: 2 }, effect: { reputation: 10, oee: 1, moral: 3 }, uc: 'TIC', category: 'fluxo' },
+                { id: 'COBOT', name: 'Robô Colaborativo', description: 'Automatiza tarefas repetitivas.', cost: { capex: 1500, time: 6 }, effect: { reputation: 15, fpy: 5, oee: 5, moral: 10, opexSaving: 200 }, uc: 'IND40', category: 'fluxo' },
+                { id: 'A3_REPORT', name: 'Relatório A3', description: 'Estrutura a resolução de problemas.', cost: { opex: 100, time: 5 }, effect: { reputation: 15 }, uc: 'PROJ', category: 'qualidade' },
+                { id: 'PDCA', name: 'PDCA', description: 'Aplica o ciclo Plan-Do-Check-Act para melhorias.', cost: { opex: 50, time: 4 }, effect: { reputation: 10 }, uc: 'PROJ', category: 'qualidade' },
+                { id: 'ANALISE_ERGONOMICA', name: 'Análise Ergonômica', description: 'Avalia e melhora a ergonomia de um posto de trabalho.', cost: { opex: 200, time: 3 }, effect: { moral: 15, oee: 2 }, uc: 'SST', category: 'qualidade' },
+                { id: 'CIPA', name: 'Reunião da CIPA', description: 'Engaja a equipe na identificação e prevenção de riscos.', cost: { opex: 50, time: 2 }, effect: { reputation: 10, moral: 5 }, uc: 'SST', category: 'qualidade' },
+                { id: 'EFICIENCIA_ENERGETICA', name: 'Eficiência Energética', description: 'Auditoria para reduzir o consumo de energia.', cost: { capex: 300, time: 4 }, effect: { opexSaving: 150, reputation: 10 }, uc: 'SUST', category: 'fluxo' },
+                { id: 'COLETA_SELETIVA', name: 'Coleta Seletiva', description: 'Implementa sistema para separar e reciclar resíduos.', cost: { opex: 100, time: 2 }, effect: { reputation: 15, moral: 5, opexSaving: 20 }, uc: 'SUST', category: 'qualidade' },
+                { id: 'REDE_INDUSTRIAL', name: 'Upgrade de Rede', description: 'Melhora a infraestrutura de rede para comunicação em tempo real.', cost: { capex: 500, time: 3 }, effect: { oee: 5, leadTime: -0.5 }, uc: 'TIC', category: 'fluxo' },
+                { id: 'CIBERSEGURANCA', name: 'Política de Cibersegurança', description: 'Protege os sistemas da fábrica contra ameaças digitais.', cost: { opex: 250, time: 3 }, effect: { reputation: 20 }, uc: 'TIC', category: 'qualidade' },
+                { id: 'ISHIKAWA', name: 'Diagrama de Ishikawa', description: 'Analisa as causas raiz de um problema (6Ms).', cost: { opex: 100, time: 3 }, effect: { reputation: 5 }, uc: 'QUAL', category: 'qualidade' },
+                { id: '5PORQUES', name: '5 Porquês', description: 'Encontra a causa raiz questionando.', cost: { opex: 20, time: 1 }, effect: { reputation: 5 }, uc: 'QUAL', category: 'qualidade' },
+                { id: 'PARETO', name: 'Diagrama de Pareto', description: 'Identifica os 20% de causas que geram 80% dos problemas.', cost: { opex: 50, time: 2 }, effect: { reputation: 5 }, uc: 'QUAL', category: 'qualidade' },
+                { id: 'IIOT_SENSOR', name: 'Sensor IIoT', description: 'Instala sensores para coleta de dados em tempo real.', cost: { capex: 400, time: 2 }, effect: { oee: 8, fpy: 2 }, uc: 'IND40', category: 'fluxo' },
+                { id: 'DIGITAL_TWIN', name: 'Gêmeo Digital', description: 'Cria uma simulação virtual do processo para otimização.', cost: { capex: 800, time: 5 }, effect: { reputation: 15, oee: 10, fpy: 3 }, uc: 'IND40', category: 'fluxo' },
+                { id: 'GANTT', name: 'Planejamento (Gantt)', description: 'Organiza as tarefas e o cronograma de um projeto.', cost: { opex: 100, time: 3 }, effect: { reputation: 10 }, uc: 'PROJ', category: 'fluxo' },
+                { id: 'SCRUM', name: 'Gestão Ágil (Scrum)', description: 'Usa ciclos curtos (sprints) para gerenciar projetos complexos.', cost: { opex: 200, time: 4 }, effect: { reputation: 15, moral: 10 }, uc: 'PROJ', category: 'fluxo' },
+                { id: 'DDS', name: 'DDS', description: 'Realiza um diálogo rápido sobre segurança com a equipe.', cost: { opex: 10, time: 1 }, effect: { moral: 5 }, uc: 'SST', category: 'qualidade' },
+                { id: 'GESTAO_RESIDUOS', name: 'Gestão de Resíduos', description: 'Contrata empresa especializada para descarte correto de resíduos químicos.', cost: { opex: 300, time: 2 }, effect: { reputation: 20, opexSaving: 30 }, uc: 'SUST', category: 'qualidade' },
+                { id: 'DASHBOARD_REALTIME', name: 'Dashboard em Tempo Real', description: 'Cria painéis visuais com KPIs da produção para todos.', cost: { capex: 600, time: 3 }, effect: { oee: 3, leadTime: -0.5, moral: 5 }, uc: 'TIC', category: 'fluxo' },
+                { id: 'CEP', name: 'CEP', description: 'Implementa Controle Estatístico de Processo para monitorar a qualidade.', cost: { opex: 250, time: 4 }, effect: { fpy: 7, reputation: 10 }, uc: 'QUAL', category: 'qualidade' },
+                { id: 'MANUTENCAO_PREDITIVA', name: 'Manutenção Preditiva (IA)', description: 'Usa IA para prever falhas em equipamentos antes que ocorram.', cost: { capex: 2000, time: 5 }, effect: { oee: 15, opexSaving: 250 }, uc: 'IND40', category: 'fluxo' },
+                { id: 'FMEA', name: 'Análise de Riscos (FMEA)', description: 'Analisa e previne modos de falha e seus efeitos em um projeto.', cost: { opex: 150, time: 4 }, effect: { reputation: 15, fpy: 2 }, uc: 'PROJ', category: 'qualidade' }
+            ],
+            stations: [ { id: 1, name: 'Corte' }, { id: 2, name: 'Dobra' }, { id: 3, name: 'Mecânica' }, { id: 4, name: 'Elétrica' }, { id: 5, name: 'Asas' }, { id: 6, name: 'Pintura' }, { id: 7, name: 'Logística' }, { id: 8, name: 'Montagem' }, { id: 9, name: 'Inspeção' }, { id: 10, name: 'Estoque' }, { id: 11, name: 'Energia' }, { id: 12, name: 'Resíduos' }, { id: 13, name: 'PCP' }, { id: 14, name: 'Projetos' }, { id: 15, name: 'Sustentabilidade' }, { id: 16, name: 'Escritório' }, { id: 17, name: 'Data Center' }, { id: 18, name: 'Ergonomia' } ],
+            scenarios: {
+                'SST_GENERICO_1': { text: "Ferramentas foram deixadas no chão no posto de [POSTO], criando um risco de tropeço.", correctCardId: '5S', moralPenalty: 5 },
+                'SST_GENERICO_2': { text: "Um operador no posto de [POSTO] está usando um EPI de forma incorreta.", correctCardId: 'TREINAMENTO', moralPenalty: 5 },
+                'SUST_GENERICO_1': { text: "Há um vazamento de ar comprimido na linha que alimenta o posto de [POSTO], desperdiçando energia.", correctCardId: 'EFICIENCIA_ENERGETICA' },
+                'TIC_GENERICO_1': { text: "A ordem de produção para o posto de [POSTO] chegou com informações erradas, causando confusão.", correctCardId: 'GESTAO_VISUAL' },
+                'QUAL_GENERICO_1': { text: "Peças estão se acumulando antes do posto de [POSTO], indicando um gargalo.", correctCardId: 'KANBAN' },
+                'QUAL_GENERICO_2': { text: "O posto de [POSTO] está produzindo peças com um defeito recorrente.", correctCardId: 'ISHIKAWA' },
+                'IND40_GENERICO_1': { text: "Não há dados precisos sobre o tempo de ciclo no posto de [POSTO].", correctCardId: 'IIOT_SENSOR' },
+                'PROJ_GENERICO_1': { text: "Uma melhoria planejada para o posto de [POSTO] está parada por falta de clareza nas próximas etapas.", correctCardId: 'GANTT' },
+            },
+        };
+
+        // --- GAME STATE ---
+        let stats = {}; let deck = []; let hand = []; let currentScenario = null; let turn = 1;
+        let gameMode = ''; let specialization = ''; let kpiHistory = []; let solvedProblems = []; let isMuted = false;
+        let isExchangeMode = false; let cardsToExchange = new Set();
+        let achievements = { qualityMaster: false, flowKing: false }; let achievementTrack = { qualidade: 0, fluxo: 0 };
+        let currentUCIndex = 0; let medalsEarned = [];
+        let clearedStationsForUC = new Set();
+        let gameFailures = [];
+
+        // --- UI ELEMENTS ---
+        const ui = {
+            startScreen: document.getElementById('start-screen'), gameScreen: document.getElementById('game-screen'), endScreen: document.getElementById('end-screen'),
+            gameOverScreen: document.getElementById('game-over-screen'), gameOverReason: document.getElementById('game-over-reason'),
+            modeSelectionScreen: document.getElementById('mode-selection-screen'), specializationScreen: document.getElementById('specialization-screen'),
+            specializationTitle: document.getElementById('specialization-title'), specializationOptions: document.getElementById('specialization-options'),
+            reputationStat: document.getElementById('reputation-stat'), capexStat: document.getElementById('capex-stat'), opexStat: document.getElementById('opex-stat'), moralStat: document.getElementById('moral-stat'),
+            levelStat: document.getElementById('level-stat'), xpBar: document.getElementById('xp-bar'), xpText: document.getElementById('xp-text'),
+            oeeStat: document.getElementById('oee-stat'), leadTimeStat: document.getElementById('lead-time-stat'), fpyStat: document.getElementById('fpy-stat'),
+            ucNameStat: document.getElementById('uc-name-stat'), ucProgressBar: document.getElementById('uc-progress-bar'),
+            medalsContainer: document.getElementById('medals-container'),
+            boardLayout: document.getElementById('board-layout'), 
+            gameFlowControl: document.getElementById('game-flow-control'),
+            diceRollerSection: document.getElementById('dice-roller-section'),
+            rollDiceButton: document.getElementById('roll-dice-button'), dice: document.getElementById('dice'), diceFaces: document.querySelectorAll('.dice-face'),
+            scenarioContainer: document.getElementById('scenario-container'), scenarioText: document.getElementById('scenario-text'), 
+            feedbackContainer: document.getElementById('feedback-container'), feedbackText: document.getElementById('feedback-text'), operatorFeedback: document.getElementById('operator-feedback'),
+            nextTurnButton: document.getElementById('next-turn-button'), handContainer: document.getElementById('hand-container'), 
+            deckCount: document.getElementById('deck-count'), startButton: document.getElementById('start-button'), 
+            restartButton: document.getElementById('restart-button'), restartGameOverButton: document.getElementById('restart-game-over-button'),
+            turnCounter: document.getElementById('turn-counter'), 
+            modal: {
+                container: document.getElementById('modal-generic'), title: document.getElementById('modal-title'), text: document.getElementById('modal-text'),
+                questionSection: document.getElementById('modal-question-section'), question: document.getElementById('modal-question'), answers: document.getElementById('modal-answers'),
+                feedbackSection: document.getElementById('modal-feedback-section'), feedbackText: document.getElementById('modal-feedback-text'),
+                closeButton: document.getElementById('modal-close-button')
+            },
+            glossaryModal: document.getElementById('glossary-modal'), glossaryContent: document.getElementById('glossary-content'), closeGlossaryModal: document.getElementById('close-glossary-modal'),
+            glossaryButton: document.getElementById('glossary-button'), muteButton: document.getElementById('mute-button'),
+            a3Report: document.getElementById('a3-report'), a3ReportGameOver: document.getElementById('a3-report-gameover'), kpiChartCanvas: document.getElementById('kpi-chart'),
+            exchangeCardsButton: document.getElementById('exchange-cards-button'),
+            recoveryChallengeButton: document.getElementById('recovery-challenge-button'),
+            confirmExchangeSection: document.getElementById('confirm-exchange-section'),
+            confirmExchangeButton: document.getElementById('confirm-exchange-button'),
+            cancelExchangeButton: document.getElementById('cancel-exchange-button'),
+            ignoreProblemButton: document.getElementById('ignore-problem-button'),
+            notificationCenter: document.getElementById('notification-center'),
+            achievementsDisplay: document.getElementById('achievements-display'),
+        };
+
+        // --- SOUND ENGINE ---
+        const sound = {
+            sfxSynth: new Tone.PolySynth(Tone.Synth, { volume: -5 }).toDestination(),
+            musicSynth: new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: "amsine", harmonicity: 1.2 },
+                envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.5 },
+                volume: -18 
+            }).toDestination(),
+            bgMusic: null, 
+
+            initMusic: function() {
+                if (this.bgMusic) return;
+                this.bgMusic = new Tone.Sequence((time, note) => {
+                    this.musicSynth.triggerAttackRelease(note, "8n", time);
+                }, [
+                    ['C4', 'E4'], null, ['G3', 'B3'], null,
+                    ['A3', 'C4'], null, ['F3', 'A3'], null
+                ], "4n").start(0);
+                Tone.Transport.bpm.value = 100;
+            },
+
+            play: (note, duration = "8n") => { if(!isMuted) new Tone.Synth({ volume: -5 }).toDestination().triggerAttackRelease(note, duration, Tone.now()); },
+            playSuccess: () => { if(!isMuted) sound.sfxSynth.triggerAttackRelease(["C4", "E4", "G4"], "8n"); },
+            playError: () => { if(!isMuted) sound.sfxSynth.triggerAttackRelease(["C3", "D#3", "G3"], "8n"); },
+            playLevelUp: () => { if(!isMuted) sound.sfxSynth.triggerAttackRelease(["C4", "G4", "C5"], "4n"); },
+            playGameOver: () => { if(!isMuted) sound.sfxSynth.triggerAttackRelease(["C3", "F3", "G#3", "C4"], "2n"); },
+            
+            toggleMusic: (forceStart = false) => {
+                if (Tone.context.state !== 'running') {
+                    Tone.start();
+                }
+                
+                if (!sound.bgMusic) {
+                    sound.initMusic();
+                }
+
+                if (forceStart && !isMuted) {
+                    Tone.Transport.start();
+                } else if (isMuted) {
+                    Tone.Transport.pause();
+                } else {
+                    Tone.Transport.start();
+                }
+            }
+        };
+
+        // --- EVENT LISTENERS ---
+        ui.startButton.addEventListener('click', () => { 
+            document.getElementById('game-container').classList.remove('hidden');
+            ui.startScreen.classList.add('hidden'); 
+            ui.modeSelectionScreen.classList.remove('hidden'); 
+            sound.play('C4'); 
+        });
+        document.querySelectorAll('.game-mode-btn').forEach(btn => btn.addEventListener('click', (e) => {
+            gameMode = e.currentTarget.dataset.mode;
+            ui.modeSelectionScreen.classList.add('hidden');
+            showSpecializationScreen(gameMode);
+            sound.play('D4');
+        }));
+        
+        ui.rollDiceButton.addEventListener('click', rollDice);
+        ui.nextTurnButton.addEventListener('click', nextTurn);
+        ui.restartButton.addEventListener('click', () => location.reload());
+        ui.restartGameOverButton.addEventListener('click', () => location.reload());
+        ui.glossaryButton.addEventListener('click', showGlossary);
+        ui.closeGlossaryModal.addEventListener('click', () => { ui.glossaryModal.classList.add('hidden'); sound.play('C4'); });
+        ui.exchangeCardsButton.addEventListener('click', toggleExchangeMode);
+        ui.recoveryChallengeButton.addEventListener('click', triggerRecoveryChallenge);
+        ui.confirmExchangeButton.addEventListener('click', confirmExchange);
+        ui.cancelExchangeButton.addEventListener('click', cancelExchange);
+        ui.ignoreProblemButton.addEventListener('click', ignoreProblem);
+        ui.muteButton.addEventListener('click', () => { 
+            isMuted = !isMuted; 
+            ui.muteButton.textContent = isMuted ? '🔇' : '🔊';
+            sound.toggleMusic();
+        });
+
+        // --- GAME LOGIC ---
+        function showSpecializationScreen(mode) {
+            const options = gameData.specializations[mode];
+            ui.specializationTitle.textContent = mode === 'carreira' ? 'Escolha sua Formação Inicial' : 'Escolha sua Especialização de Consultor';
+            ui.specializationOptions.innerHTML = '';
+            options.forEach(spec => {
+                const button = document.createElement('button');
+                button.className = 'spec-btn bg-white p-6 rounded-lg shadow-lg hover:shadow-xl transition-shadow border-2 border-transparent hover:border-indigo-500';
+                button.dataset.spec = spec.id;
+                button.innerHTML = `<h3 class="text-xl font-bold text-indigo-700 mb-2">${spec.name}</h3><p>${spec.description}</p>`;
+                button.onclick = () => {
+                    specialization = spec.id;
+                    ui.specializationScreen.classList.add('hidden');
+                    startGame();
+                    sound.play('E4');
+                };
+                ui.specializationOptions.appendChild(button);
+            });
+            ui.specializationScreen.classList.remove('hidden');
+        }
+
+        function startGame() {
+            ui.gameScreen.classList.remove('hidden');
+            stats = { ...gameData.playerStats }; 
+            hand = []; turn = 1; kpiHistory = []; solvedProblems = []; gameFailures = [];
+            medalsEarned = [];
+            achievements = { qualityMaster: false, flowKing: false };
+            achievementTrack = { qualidade: 0, fluxo: 0 };
+            currentUCIndex = 0;
+            clearedStationsForUC.clear();
+            Object.values(gameData.ucQuestions).flat().forEach(q => q.answered = false);
+
+            if (gameMode === 'carreira') {
+                deck = shuffle(gameData.toolCards.filter(c => c.uc === 'SST' || !c.uc));
+            } else {
+                deck = shuffle([...gameData.toolCards]);
+            }
+            
+            drawCards(5); renderBoard(); updateAllDisplays(); recordKpiHistory();
+            sound.toggleMusic(true);
+        }
+
+        function shuffle(array) { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } return array; }
+        function drawCards(count) { for (let i = 0; i < count; i++) { if (deck.length > 0 && hand.length < 5) { hand.push(deck.pop()); } } }
+        
+        function updateAllDisplays() {
+            ui.reputationStat.textContent = stats.reputation;
+            ui.capexStat.textContent = `R$${(stats.capex/1000).toFixed(1)}k`;
+            ui.opexStat.textContent = `R$${(stats.opex/1000).toFixed(1)}k`;
+            ui.moralStat.textContent = `${stats.moral.toFixed(0)}%`;
+            ui.oeeStat.textContent = `${stats.oee.toFixed(0)}%`;
+            ui.leadTimeStat.textContent = `${stats.leadTime.toFixed(1)}d`;
+            ui.fpyStat.textContent = `${stats.fpy.toFixed(0)}%`;
+            
+            ui.levelStat.textContent = stats.level;
+            const currentLevelXP = gameData.levelThresholds[stats.level - 1] || 0;
+            const nextLevelXP = gameData.levelThresholds[stats.level] || stats.xp;
+            const xpForLevel = nextLevelXP - currentLevelXP;
+            const currentXPInLevel = stats.xp - currentLevelXP;
+            const xpProgress = xpForLevel > 0 ? (currentXPInLevel / xpForLevel) * 100 : 100;
+            ui.xpBar.style.width = `${xpProgress}%`;
+            ui.xpText.textContent = `${stats.xp}/${nextLevelXP}`;
+            
+            ui.moralStat.className = `text-lg font-bold ${stats.moral >= 80 ? 'kpi-good' : stats.moral >= 50 ? 'kpi-neutral' : 'kpi-bad'}`;
+            [ui.oeeStat, ui.fpyStat].forEach(el => { el.className = `text-lg font-bold ${parseInt(el.textContent) >= 85 ? 'kpi-good' : 'kpi-bad'}`; });
+            ui.leadTimeStat.className = `text-lg font-bold ${parseFloat(ui.leadTimeStat.textContent) <= 5 ? 'kpi-good' : 'kpi-bad'}`;
+            
+            if (gameMode === 'carreira' && currentUCIndex < gameData.ucData.length) {
+                const currentUC = gameData.ucData[currentUCIndex];
+                ui.ucNameStat.textContent = currentUC.name;
+                const progress = (clearedStationsForUC.size / gameData.stations.length) * 100;
+                ui.ucProgressBar.style.width = `${progress}%`;
+            } else {
+                ui.ucNameStat.textContent = "Consultoria Livre";
+                ui.ucProgressBar.style.width = '100%';
+            }
+
+            if (stats.moral < 60 || stats.reputation < 60) {
+                ui.recoveryChallengeButton.classList.remove('hidden');
+            } else {
+                ui.recoveryChallengeButton.classList.add('hidden');
+            }
+
+            ui.turnCounter.textContent = turn; ui.deckCount.textContent = deck.length;
+            renderHand();
+            renderMedals();
+        }
+
+        function renderBoard() {
+            const existingStations = ui.boardLayout.querySelectorAll('.station');
+            existingStations.forEach(station => station.remove());
+
+            const stations = gameData.stations;
+            const positions = [
+                {r:1, c:1}, {r:1, c:2}, {r:1, c:3}, {r:1, c:4}, {r:1, c:5}, {r:1, c:6},
+                {r:2, c:6}, {r:3, c:6}, {r:4, c:6}, {r:5, c:6},
+                {r:5, c:5}, {r:5, c:4}, {r:5, c:3}, {r:5, c:2}, {r:5, c:1},
+                {r:4, c:1}, {r:3, c:1}, {r:2, c:1}
+            ];
+
+            stations.forEach((station, index) => {
+                const pos = positions[index];
+                const stationEl = document.createElement('div');
+                stationEl.id = `station-${station.id}`;
+                stationEl.className = 'station rounded-lg p-2 text-center text-sm flex flex-col justify-center items-center';
+                stationEl.style.gridRow = pos.r;
+                stationEl.style.gridColumn = pos.c;
+                stationEl.innerHTML = `<span class="font-bold block">${station.id}</span><span>${station.name}</span>`;
+                if (clearedStationsForUC.has(station.id)) stationEl.classList.add('completed');
+                ui.boardLayout.appendChild(stationEl);
+            });
+        }
+
+        function renderHand() {
+            ui.handContainer.innerHTML = '';
+            hand.forEach(card => {
+                const cardEl = document.createElement('div');
+                const isLocked = gameMode === 'carreira' && card.uc && card.uc !== gameData.ucData[currentUCIndex].id;
+                cardEl.className = `card bg-white p-3 rounded-lg shadow-md border-2 border-blue-200 ${isLocked ? 'locked' : 'cursor-pointer'}`;
+                let capexCost = card.cost.capex || 0;
+                let opexCost = card.cost.opex || 0;
+                cardEl.innerHTML = `<h4 class="font-bold text-md text-blue-800">${card.name}</h4><p class="text-xs text-gray-600 mb-1">${card.description}</p><div class="text-xs font-semibold"><span>Custo: ${card.cost.time}h / ${capexCost > 0 ? `C$${capexCost}` : `O$${opexCost}`}</span></div>`;
+                if (!isLocked) {
+                    cardEl.onclick = () => {
+                        if (isExchangeMode) toggleCardForExchange(card, cardEl);
+                        else playCard(card);
+                    };
+                }
+                ui.handContainer.appendChild(cardEl);
+            });
+        }
+
+        function renderMedals() {
+            ui.medalsContainer.innerHTML = '';
+            gameData.ucData.forEach(uc => {
+                const earned = medalsEarned.includes(uc.id);
+                const medalEl = document.createElement('div');
+                medalEl.title = uc.name;
+                medalEl.className = `medal rounded-full ${uc.medalColor} ${earned ? 'earned' : ''}`;
+                ui.medalsContainer.appendChild(medalEl);
+            });
+        }
+
+        function rollDice() {
+            ui.rollDiceButton.disabled = true;
+            ui.exchangeCardsButton.disabled = true;
+            sound.play('F4', '16n');
+
+            const randomX = (Math.floor(Math.random() * 8) + 4) * 180;
+            const randomY = (Math.floor(Math.random() * 8) + 4) * 180;
+            ui.dice.style.transform = `rotateX(${randomX}deg) rotateY(${randomY}deg)`;
+            
+            setTimeout(() => {
+                let stationToVisit;
+                if (gameMode === 'carreira') {
+                    const unclearedStations = gameData.stations.filter(s => !clearedStationsForUC.has(s.id));
+                    if (unclearedStations.length === 0) {
+                        attemptUCAdvancement();
+                        return;
+                    }
+                    stationToVisit = unclearedStations[Math.floor(Math.random() * unclearedStations.length)];
+                    
+                    const currentUC = gameData.ucData[currentUCIndex];
+                    const scenarioKey = currentUC.genericScenarios[Math.floor(Math.random() * currentUC.genericScenarios.length)];
+                    currentScenario = { ...gameData.scenarios[scenarioKey] };
+                    currentScenario.id = `${scenarioKey}_${stationToVisit.id}`;
+                    currentScenario.stationId = stationToVisit.id;
+                    currentScenario.text = currentScenario.text.replace('[POSTO]', stationToVisit.name.toUpperCase());
+
+                } else { // Modo Consultoria
+                    const randomStation = gameData.stations[Math.floor(Math.random() * gameData.stations.length)];
+                    const scenarioKeys = Object.keys(gameData.scenarios);
+                    const randomKey = scenarioKeys[Math.floor(Math.random() * scenarioKeys.length)];
+                    currentScenario = { ...gameData.scenarios[randomKey] };
+                    currentScenario.id = `${randomKey}_${randomStation.id}`;
+                    currentScenario.stationId = randomStation.id;
+                    currentScenario.text = currentScenario.text.replace('[POSTO]', randomStation.name.toUpperCase());
+                }
+
+                document.querySelector('#dice .front').textContent = currentScenario.stationId;
+                dealSmartHand(currentScenario.correctCardId);
+
+                ui.diceRollerSection.classList.add('hidden');
+                ui.scenarioContainer.classList.remove('hidden');
+                const stationName = gameData.stations.find(s => s.id === currentScenario.stationId)?.name || 'Fábrica';
+                ui.scenarioText.textContent = `[Desafio em ${stationName.toUpperCase()}] ${currentScenario.text}`;
+                document.querySelectorAll('.station.active').forEach(el => el.classList.remove('active'));
+                document.getElementById(`station-${currentScenario.stationId}`)?.classList.add('active');
+            }, 1500);
+        }
+        
+        function dealSmartHand(correctCardId) {
+            deck.push(...hand);
+            hand = [];
+            const correctCard = gameData.toolCards.find(c => c.id === correctCardId);
+            if (correctCard) {
+                hand.push(correctCard);
+                deck = deck.filter(c => c.id !== correctCardId);
+            }
+            deck = shuffle(deck);
+            drawCards(4);
+            hand = shuffle(hand);
+            renderHand();
+        }
+
+        function playCard(card) {
+            if (!currentScenario) return;
+            applyCardEffects(card);
+        }
+        
+        function applyCardEffects(card) {
+            let finalCost = { capex: card.cost.capex || 0, opex: card.cost.opex || 0 };
+            if (stats.capex < finalCost.capex || stats.opex < finalCost.opex) {
+                showNotification("Recursos insuficientes para usar esta carta!");
+                sound.playError();
+                return;
+            }
+            stats.capex -= finalCost.capex;
+            stats.opex -= finalCost.opex;
+
+            const isCorrect = (currentScenario && card.id === currentScenario.correctCardId);
+            let feedbackClass = 'feedback-incorrect';
+            let feedbackMsg = "Essa não é a melhor ferramenta para este problema.";
+            let operatorMsg = '';
+
+            if (isCorrect) {
+                sound.playSuccess();
+                feedbackClass = 'feedback-correct';
+                feedbackMsg = "Ótima escolha! Problema resolvido com sucesso.";
+                let effect = { ...card.effect };
+                
+                const specData = gameData.specializations[gameMode].find(s => s.id === specialization);
+                if (specData && specData.bonusCards.includes(card.id)) {
+                    if(effect.reputation) effect.reputation *= 1.1;
+                    if(effect.moral) effect.moral *= 1.1;
+                    if(effect.opexSaving) effect.opexSaving *= 1.1;
+                    if(effect.fpy) effect.fpy *= 1.1;
+                    if(effect.oee) effect.oee *= 1.1;
+                    if(effect.leadTime) effect.leadTime *= 0.9;
+                }
+                stats.reputation += (effect.reputation || 0);
+                stats.moral = Math.min(100, stats.moral + (effect.moral || 0));
+                stats.oee = Math.min(100, stats.oee + (effect.oee || 0));
+                stats.leadTime += (effect.leadTime || 0);
+                stats.fpy = Math.min(100, stats.fpy + (effect.fpy || 0));
+                stats.opex -= (effect.opexSaving || 0);
+                addXP(50);
+                
+                if(gameMode === 'carreira') clearedStationsForUC.add(currentScenario.stationId);
+                
+                document.getElementById(`station-${currentScenario.stationId}`)?.classList.add('completed');
+                solvedProblems.push({ problem: currentScenario.text, tool: card.name });
+                checkAchievements(card);
+                checkUCProgress();
+            } else {
+                sound.playError();
+                stats.reputation -= 5;
+                stats.moral -= 5;
+                addXP(-20);
+            }
+
+            ui.scenarioContainer.classList.add('hidden');
+            ui.feedbackContainer.classList.remove('hidden');
+            ui.feedbackContainer.className = `mt-6 p-4 rounded-lg ${feedbackClass} text-left w-full`;
+            ui.feedbackText.textContent = feedbackMsg;
+            ui.operatorFeedback.textContent = operatorMsg;
+            ui.nextTurnButton.classList.remove('hidden');
+            updateAllDisplays();
+        }
+
+        function checkUCProgress() {
+            if (gameMode !== 'carreira') return;
+            if (clearedStationsForUC.size >= gameData.stations.length) {
+                attemptUCAdvancement();
+            }
+        }
+
+        function attemptUCAdvancement() {
+            const uc = gameData.ucData[currentUCIndex];
+            const goal = uc.kpiGoal;
+            const kpiMet = goal.isLower ? stats[goal.key] <= goal.value : stats[goal.key] >= goal.value;
+
+            if (kpiMet) {
+                triggerKnowledgeCheck(true); // Final Exam
+            } else {
+                const message = `Você otimizou todos os postos, mas seus KPIs ainda não atingiram a meta. Melhore seu ${goal.label} para ${goal.isLower ? 'abaixo de' : 'acima de'} ${goal.value} para provar sua competência.`;
+                showModal("Meta de KPI não atingida", message, () => {
+                    ui.rollDiceButton.disabled = false;
+                    ui.exchangeCardsButton.disabled = false;
+                });
+            }
+        }
+
+        function advanceUC() {
+            sound.playLevelUp();
+            const completedUC = gameData.ucData[currentUCIndex];
+            medalsEarned.push(completedUC.id);
+            currentUCIndex++;
+            clearedStationsForUC.clear();
+
+            if (currentUCIndex >= gameData.ucData.length) {
+                endGame(true);
+                return;
+            }
+
+            const newUC = gameData.ucData[currentUCIndex];
+            const newCards = gameData.toolCards.filter(c => newUC.unlocks.includes(c.id));
+            deck.push(...newCards);
+            deck = shuffle(deck);
+
+            showModal(
+                `UC Concluída: ${completedUC.name}`,
+                `Parabéns! Você ganhou uma medalha e dominou os conceitos de ${completedUC.name}. Agora você avança para ${newUC.name}. Novas ferramentas foram adicionadas ao seu baralho!`,
+                () => {
+                    ui.rollDiceButton.disabled = false;
+                    ui.exchangeCardsButton.disabled = false;
+                    nextTurn();
+                }
+            );
+            updateAllDisplays();
+        }
+        
+        function triggerKnowledgeCheck(isFinalExam = false) {
+            const currentUCId = gameData.ucData[currentUCIndex].id;
+            const questions = gameData.ucQuestions[currentUCId];
+            
+            let questionPool = [];
+            if (currentScenario) {
+                questionPool = questions.filter(q => q.stations && q.stations.includes(currentScenario.stationId));
+            }
+            if (questionPool.length === 0) {
+                questionPool = questions.filter(q => !q.stations || q.stations.length === 0);
+            }
+            if (questionPool.length === 0) {
+                questionPool = questions;
+            }
+
+            const question = questionPool[Math.floor(Math.random() * questionPool.length)];
+            
+            ui.modal.title.textContent = isFinalExam ? 'Exame Final!' : 'Teste de Conhecimento!';
+            ui.modal.text.textContent = '';
+            ui.modal.questionSection.classList.remove('hidden');
+            ui.modal.question.textContent = question.q;
+            ui.modal.answers.innerHTML = '';
+            question.a.forEach((answerText, index) => {
+                const button = document.createElement('button');
+                button.className = 'w-full text-left p-3 bg-gray-200 rounded-lg hover:bg-indigo-100';
+                button.textContent = answerText;
+                button.onclick = () => handleQuestionAnswer(index === question.correct, isFinalExam, question);
+                ui.modal.answers.appendChild(button);
+            });
+            ui.modal.feedbackSection.classList.add('hidden');
+            ui.modal.closeButton.classList.add('hidden');
+            ui.modal.container.classList.remove('hidden');
+        }
+
+        function handleQuestionAnswer(isCorrect, isFinalExam, question) {
+            question.answered = true;
+            ui.modal.questionSection.classList.add('hidden');
+            ui.modal.feedbackSection.classList.remove('hidden');
+            if (isCorrect) {
+                sound.playSuccess();
+                if (isFinalExam) {
+                    ui.modal.feedbackText.textContent = "Correto! Você provou sua competência e está pronto para avançar.";
+                    setTimeout(advanceUC, 1000);
+                } else {
+                    ui.modal.feedbackText.textContent = "Correto! Você demonstrou seu conhecimento. (+10 Rep, +25 XP)";
+                    stats.reputation += 10;
+                    addXP(25);
+                }
+                ui.modal.feedbackText.className = 'font-medium text-green-600';
+            } else {
+                sound.playError();
+                const failure = { type: 'Erro de Conhecimento', text: question.q };
+                gameFailures.push(failure);
+                if (isFinalExam) {
+                    ui.modal.feedbackText.textContent = "Incorreto. Você precisa dominar este conceito para avançar. Tente novamente no próximo turno. (-10 Rep)";
+                    stats.reputation -= 10;
+                } else {
+                    ui.modal.feedbackText.textContent = "Incorreto. É uma boa oportunidade para revisar este conceito. (-5 Rep, -5 Moral)";
+                    stats.reputation -= 5;
+                    stats.moral -= 5;
+                }
+                ui.modal.feedbackText.className = 'font-medium text-red-600';
+            }
+            ui.modal.closeButton.classList.remove('hidden');
+            ui.modal.closeButton.onclick = () => {
+                ui.modal.container.classList.add('hidden');
+                if (isFinalExam && !isCorrect) {
+                    ui.rollDiceButton.disabled = false;
+                    ui.exchangeCardsButton.disabled = false;
+                }
+                updateAllDisplays();
+            };
+        }
+
+        function triggerRecoveryChallenge() {
+            const challenge = gameData.recoveryChallenges[Math.floor(Math.random() * gameData.recoveryChallenges.length)];
+            ui.modal.title.textContent = 'Desafio de Recuperação!';
+            ui.modal.text.textContent = challenge.text;
+            ui.modal.questionSection.classList.remove('hidden');
+            ui.modal.question.textContent = challenge.question;
+            ui.modal.answers.innerHTML = '';
+            challenge.answers.forEach((answer, index) => {
+                const button = document.createElement('button');
+                button.className = 'w-full text-left p-3 bg-gray-200 rounded-lg hover:bg-indigo-100';
+                button.textContent = answer.text;
+                button.onclick = () => handleRecoveryAnswer(index === challenge.correctIndex, challenge);
+                ui.modal.answers.appendChild(button);
+            });
+            ui.modal.feedbackSection.classList.add('hidden');
+            ui.modal.closeButton.classList.add('hidden');
+            ui.modal.container.classList.remove('hidden');
+        }
+
+        function handleRecoveryAnswer(isCorrect, challenge) {
+            ui.modal.questionSection.classList.add('hidden');
+            ui.modal.feedbackSection.classList.remove('hidden');
+            if(isCorrect) {
+                sound.playSuccess();
+                let successMsg = "Sucesso! ";
+                if (challenge.success.reputation) { stats.reputation += challenge.success.reputation; successMsg += `+${challenge.success.reputation} Rep. `; }
+                if (challenge.success.moral) { stats.moral += challenge.success.moral; successMsg += `+${challenge.success.moral} Moral. `; }
+                if (challenge.success.oee) { stats.oee += challenge.success.oee; successMsg += `+${challenge.success.oee}% OEE. `; }
+                if (challenge.success.fpy) { stats.fpy += challenge.success.fpy; successMsg += `+${challenge.success.fpy}% FPY. `; }
+                ui.modal.feedbackText.textContent = successMsg;
+            } else {
+                sound.playError();
+                let failureMsg = "Falha! ";
+                if (challenge.failure.reputation) { stats.reputation += challenge.failure.reputation; failureMsg += `${challenge.failure.reputation} Rep. `; }
+                if (challenge.failure.moral) { stats.moral += challenge.failure.moral; failureMsg += `${challenge.failure.moral} Moral. `; }
+                ui.modal.feedbackText.textContent = failureMsg;
+            }
+            ui.modal.closeButton.classList.remove('hidden');
+            ui.modal.closeButton.onclick = () => {
+                ui.modal.container.classList.add('hidden');
+                updateAllDisplays();
+            };
+        }
+
+        function showModal(title, text, onClose = () => {}) {
+            ui.modal.title.textContent = title;
+            ui.modal.text.textContent = text;
+            ui.modal.questionSection.classList.add('hidden');
+            ui.modal.feedbackSection.classList.add('hidden');
+            ui.modal.closeButton.classList.remove('hidden');
+            ui.modal.container.classList.remove('hidden');
+            ui.modal.closeButton.onclick = () => {
+                ui.modal.container.classList.add('hidden');
+                onClose();
+            };
+        }
+
+        function nextTurn() {
+            turn++;
+            stats.opex -= 100;
+            if (checkFailureConditions()) return;
+            
+            if (gameMode === 'carreira' && Math.random() < 0.25) { // 25% chance of random test
+                triggerKnowledgeCheck(false);
+            }
+
+            currentScenario = null;
+            ui.feedbackContainer.classList.add('hidden');
+            ui.diceRollerSection.classList.remove('hidden');
+            ui.rollDiceButton.disabled = false;
+            ui.exchangeCardsButton.disabled = false;
+            document.querySelector('#dice .front').textContent = '?';
+            ui.dice.style.transform = 'rotateX(0deg) rotateY(0deg)';
+            recordKpiHistory();
+            updateAllDisplays();
+        }
+        
+        function ignoreProblem() {
+            if (!currentScenario) return;
+            sound.playError();
+            stats.reputation -= 15;
+            stats.moral -= (currentScenario.moralPenalty || 5);
+            addXP(-10);
+            gameFailures.push({ type: 'Problema Ignorado', text: currentScenario.text });
+            ui.scenarioContainer.classList.add('hidden');
+            ui.feedbackContainer.classList.remove('hidden');
+            ui.feedbackContainer.className = 'mt-6 p-4 rounded-lg feedback-incorrect text-left w-full';
+            ui.feedbackText.textContent = "Você ignorou o problema. Isso afetou sua reputação e o moral da equipe.";
+            ui.operatorFeedback.textContent = '';
+            ui.nextTurnButton.classList.remove('hidden');
+            updateAllDisplays();
+        }
+        function toggleExchangeMode() {
+            if (currentScenario) return;
+            isExchangeMode = !isExchangeMode;
+            ui.exchangeCardsButton.classList.toggle('hidden');
+            ui.confirmExchangeSection.classList.toggle('hidden');
+            if (!isExchangeMode) cancelExchange();
+        }
+        function toggleCardForExchange(card, cardEl) {
+            if (card.isWaste) return;
+            sound.play('C4', '16n');
+            if (cardsToExchange.has(card.id)) {
+                cardsToExchange.delete(card.id);
+                cardEl.classList.remove('selected');
+            } else {
+                cardsToExchange.add(card.id);
+                cardEl.classList.add('selected');
+            }
+            const cost = (cardsToExchange.size * 1);
+            ui.confirmExchangeButton.textContent = `Confirmar Troca (Custo: ${cost}h)`;
+        }
+        function confirmExchange() {
+            const cost = cardsToExchange.size * 1;
+            if (cardsToExchange.size === 0) { cancelExchange(); return; }
+            sound.play('B3');
+            stats.opex -= cost * 50;
+            const cardsToKeep = hand.filter(card => !cardsToExchange.has(card.id));
+            const cardsToReturn = hand.filter(card => cardsToExchange.has(card.id));
+            deck.push(...cardsToReturn);
+            deck = shuffle(deck);
+            hand = cardsToKeep;
+            drawCards(cardsToExchange.size);
+            cancelExchange();
+            updateAllDisplays();
+        }
+        function cancelExchange() {
+            isExchangeMode = false;
+            cardsToExchange.clear();
+            ui.exchangeCardsButton.classList.remove('hidden');
+            ui.confirmExchangeSection.classList.add('hidden');
+            renderHand();
+        }
+        function showGlossary() {
+            sound.play('E4');
+            ui.glossaryContent.innerHTML = '';
+            gameData.toolCards.sort((a,b) => a.name.localeCompare(b.name)).forEach(card => {
+                const div = document.createElement('div');
+                div.className = 'mb-3 pb-3 border-b';
+                div.innerHTML = `<h4 class="font-bold text-lg">${card.name}</h4><p class="text-sm">${card.description}</p>`;
+                ui.glossaryContent.appendChild(div);
+            });
+            ui.glossaryModal.classList.remove('hidden');
+        }
+        function recordKpiHistory() { kpiHistory.push({ turn, ...stats }); }
+        
+        function generateA3Report(targetElement) {
+            const initial = kpiHistory[0];
+            const final = kpiHistory[kpiHistory.length - 1];
+            if (!initial || !final) return; 
+
+            let problemList = solvedProblems.map((p, i) => `
+                <tr>
+                    <td class="border px-2 py-1">${p.problem}</td>
+                    <td class="border px-2 py-1">Jogador</td>
+                    <td class="border px-2 py-1">${i + 1}</td>
+                    <td class="border px-2 py-1">${i + 1}</td>
+                </tr>`).join('');
+            let failureList = gameFailures.map(f => `<li><strong>${f.type}:</strong> ${f.text}</li>`).join('');
+            
+            let suggestions = [];
+            if (final.oee < 75) suggestions.push('<li>Seu <strong>OEE</strong> está baixo. Considere focar em ferramentas como <strong>TPM</strong> ou <strong>Manutenção Preditiva</strong> para aumentar a disponibilidade e performance dos equipamentos.</li>');
+            if (final.fpy < 92) suggestions.push('<li>Seu <strong>FPY</strong> precisa de atenção. Implementar <strong>CEP</strong> ou <strong>Poka-Yoke</strong> pode ajudar a reduzir defeitos na fonte.</li>');
+            if (final.leadTime > 8) suggestions.push('<li>Seu <strong>Lead Time</strong> está alto. Mapear o fluxo com <strong>VSM</strong> e controlar o WIP com <strong>Kanban</strong> são estratégias eficazes.</li>');
+            if (final.moral < 85) suggestions.push('<li>O <strong>Moral</strong> da equipe pode ser melhorado. Ferramentas como <strong>DDS</strong> e <strong>Análise Ergonômica</strong> mostram que a gestão se importa com as pessoas.</li>');
+            if (suggestions.length === 0) suggestions.push('<li>Seus KPIs estão excelentes! Continue aplicando os princípios de melhoria contínua (Kaizen) para manter o alto desempenho.</li>');
+
+            targetElement.innerHTML = `
+                <div class="space-y-2 text-xs">
+                    <div class="flex justify-between items-center border-b pb-2">
+                        <h2 class="text-lg font-bold">Relatório A3: Otimização da Linha de Produção</h2>
+                        <div class="text-right">
+                            <p><strong>Data:</strong> ${new Date().toLocaleDateString()}</p>
+                            <p><strong>Responsável:</strong> Jogador</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- Coluna Esquerda -->
+                        <div class="space-y-2">
+                            <div class="p-2 border rounded"><strong>Considerações Iniciais:</strong><p>Durante a simulação, foram identificados desafios operacionais que impactaram os indicadores de performance (KPIs).</p></div>
+                            <div class="p-2 border rounded"><strong>Situação Atual (KPIs Iniciais):</strong><p>OEE: ${initial.oee.toFixed(0)}%, LT: ${initial.leadTime.toFixed(1)}d, FPY: ${initial.fpy.toFixed(0)}%, Moral: ${initial.moral.toFixed(0)}%</p></div>
+                            <div class="p-2 border rounded"><strong>Objetivo:</strong><p>Melhorar os KPIs de OEE, FPY e Lead Time, e avançar em todas as Unidades de Competência, mantendo o moral e a reputação elevados.</p></div>
+                            <div class="p-2 border rounded"><strong>Análise (Falhas):</strong><ul class="list-disc pl-4 text-red-600">${failureList || '<li>Nenhuma falha registrada.</li>'}</ul></div>
+                        </div>
+                        <!-- Coluna Direita -->
+                        <div class="space-y-2">
+                            <div class="p-2 border rounded"><strong>Proposta de Melhoria:</strong><p>Implementação de um conjunto de ferramentas Lean e de gestão, abrangendo Qualidade, Segurança, Sustentabilidade, TIC, Indústria 4.0 e Projetos para resolver problemas operacionais.</p></div>
+                            <div class="p-2 border rounded">
+                                <strong>Plano de Ação (Melhorias Implementadas):</strong>
+                                <table class="w-full mt-1 text-left table-auto">
+                                    <thead><tr><th class="border px-2 py-1">Descrição</th><th class="border px-2 py-1">Responsável</th><th class="border px-2 py-1">Início</th><th class="border px-2 py-1">Fim</th></tr></thead>
+                                    <tbody>${problemList || '<tr><td colspan="4" class="border px-2 py-1">Nenhuma ação registrada.</td></tr>'}</tbody>
+                                </table>
+                            </div>
+                            <div class="p-2 border rounded"><strong>Acompanhamento/Indicadores (Resultados):</strong><p><strong>KPIs Finais:</strong> OEE: ${final.oee.toFixed(0)}%, LT: ${final.leadTime.toFixed(1)}d, FPY: ${final.fpy.toFixed(0)}%, Moral: ${final.moral.toFixed(0)}%</p><ul class="list-disc pl-4 mt-1 text-blue-600">${suggestions.join('')}</ul></div>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function renderChart() { new Chart(ui.kpiChartCanvas, { type: 'line', data: { labels: kpiHistory.map(h => `T${h.turn}`), datasets: [{ label: 'OEE (%)', data: kpiHistory.map(h => h.oee), borderColor: 'rgb(75, 192, 192)' }, { label: 'FPY (%)', data: kpiHistory.map(h => h.fpy), borderColor: 'rgb(54, 162, 235)' }, { label: 'Lead Time (d)', data: kpiHistory.map(h => h.leadTime), borderColor: 'rgb(255, 99, 132)', yAxisID: 'y1' }] }, options: { scales: { y: { beginAtZero: true, max: 100 }, y1: { position: 'right', grid: { drawOnChartArea: false } } } } }); }
+        function addXP(amount) { stats.xp += amount; if (stats.xp < 0) stats.xp = 0; checkLevelUp(); }
+        function checkLevelUp() { if (stats.level >= gameData.levelThresholds.length) return; const nextLevelXP = gameData.levelThresholds[stats.level]; if (stats.xp >= nextLevelXP) { stats.level++; sound.playLevelUp(); showNotification(`🎉 Nível ${stats.level}! +$500 OPEX, +10 Moral.`); stats.opex += 500; stats.moral = Math.min(100, stats.moral + 10); } }
+        function checkAchievements(card) { const category = card.category; if (!category) return; achievementTrack[category]++; if (category === 'qualidade' && achievementTrack.qualidade >= 3 && !achievements.qualityMaster) { achievements.qualityMaster = true; showNotification('🏆 Conquista: Mestre da Qualidade!'); stats.reputation += 20; } if (category === 'fluxo' && achievementTrack.fluxo >= 3 && !achievements.flowKing) { achievements.flowKing = true; showNotification('🏆 Conquista: Rei do Fluxo!'); stats.reputation += 20; } }
+        function showNotification(message) { const notification = document.createElement('div'); notification.className = 'notification'; notification.textContent = message; ui.notificationCenter.appendChild(notification); setTimeout(() => { notification.remove(); }, 5000); }
+        function displayAchievements() { let html = '<h3 class="font-bold text-lg mb-2">Conquistas</h3>'; if (achievements.qualityMaster) html += '<p class="text-green-600">🏆 Mestre da Qualidade</p>'; if (achievements.flowKing) html += '<p class="text-blue-600">🏆 Rei do Fluxo</p>'; if (!achievements.qualityMaster && !achievements.flowKing) html += '<p class="text-gray-500">Nenhuma conquista.</p>'; ui.achievementsDisplay.innerHTML = html; }
+        function checkFailureConditions() { let reason = ''; if (stats.reputation <= 0) reason = 'Sua reputação chegou a zero!'; else if (stats.moral <= 0) reason = 'O moral da equipe chegou a zero!'; else if (stats.capex < 0 || stats.opex < 0) reason = 'Você faliu!'; if (reason) { endGame(false, reason); return true; } return false; }
+        
+        function endGame(isWin, reason = '') {
+            sound.bgMusic.stop();
+            ui.gameScreen.classList.add('hidden');
+            if (isWin) {
+                sound.playSuccess();
+                ui.endScreen.classList.remove('hidden');
+                generateA3Report(ui.a3Report);
+                renderChart();
+                displayAchievements();
+            } else {
+                sound.playGameOver();
+                ui.gameOverScreen.classList.remove('hidden');
+                ui.gameOverReason.textContent = reason;
+                generateA3Report(ui.a3ReportGameOver);
+            }
+        }
+
+    </script>
+</body>
+</html>
